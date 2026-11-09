@@ -11,7 +11,7 @@ The plugin that makes Claude Code read your team's shared memory before it works
 /plugin install cbox-brain@cbox-brain-plugin
 ```
 
-Then connect the MCP server, if you have not yet, and sign the hooks in:
+Then connect the MCP server, if you have not yet, and sign the hooks in. The hooks read nothing until this is done:
 
 ```bash
 claude mcp add --transport http cbox-brain https://app.cboxbrain.com/mcp
