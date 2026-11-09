@@ -1,0 +1,15 @@
+{
+  "name": "cbox-brain-plugin",
+  "owner": {
+    "name": "Cbox",
+    "email": "sn@cbox.dk"
+  },
+  "description": "Cbox Brain for Claude Code: hooks that make the agent read your team's shared memory before it works and write after, plus the using-brain skill.",
+  "plugins": [
+    {
+      "name": "cbox-brain",
+      "source": "./plugins/cbox-brain",
+      "description": "Cbox Brain hooks for Claude Code: the project's context at session start (and again after a compaction), what changed in Brain on every prompt, a gate before deploy-shaped commands against your team's policies, a reminder to remember at stop, and what was learned carried through a compaction. Plus the using-brain skill: when to call which Brain tool."
+    }
+  ]
+}
