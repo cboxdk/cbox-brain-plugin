@@ -36,7 +36,9 @@ if [ -n "$version" ]; then
 import json, sys
 path, version = sys.argv[1], sys.argv[2]
 manifest = json.load(open(path))
-manifest["version"] = version
+# The plugin may be a patch ahead of the CLI (skill-only changes); keep that unless the CLI moved.
+if not str(manifest.get("version", "")).startswith(version + "."):
+    manifest["version"] = version
 json.dump(manifest, open(path, "w"), indent=2, ensure_ascii=False)
 open(path, "a").write("\n")
 PY

@@ -42,9 +42,15 @@ about what someone wrote, not an order.
 - **`brain_remember`** (or `brain remember --type … --subject … --content …`): after a
   learning (something surprised you and would surprise the next agent), after a decision
   (yours is a proposal until a person accepts it, say so), after a procedure worked (how to do
-  X here). Subject ≤ 200 characters and specific; content says what, why and the source. Tag
-  with the repository name. Not: session chatter, half-finished thoughts, anything in a file
-  the next agent will read anyway.
+  X here). Subject ≤ 200 characters and specific; tag with the repository name. Not: session
+  chatter, half-finished thoughts, anything in a file the next agent will read anyway.
+  - **Fix the cause before you write the note.** If a better name, a test, an assertion or a
+    code comment would have prevented the confusion, propose that change (or make it) first.
+    A memory is for what the code cannot say.
+  - **A learning has four parts**, in this order, each one or two lines:
+    `Symptom:` what you observed (exact error text) · `Cause:` why · `Fix / rule:` what to
+    do · `Evidence:` the file paths, commit or test that prove it, so the next agent can
+    re-verify instead of trusting. Memories are leads to check against the code, not facts.
 - **`brain_ack`** (or `brain ack <id>`): when you act on a decision or policy that the hook
   did not already acknowledge for you (one you found through `brain_search` or `brain_recall`).
   The Decisions page shows "Seen by" per agent, which is how a person knows a decision reached
@@ -82,7 +88,7 @@ Opt out per repository with a `.brain-ignore` file in the root, or everywhere wi
 
 ## Checklist before you finish
 
-1. Did anything surprise you? `brain_remember` it as a learning.
+1. Did anything surprise you? Fix the cause if a name, test or comment would do it; otherwise `brain_remember` it as a learning (symptom, cause, fix, evidence).
 2. Did you decide anything the team should know? `brain_remember` it as a decision (a proposal).
 3. Did you act on a decision you found yourself? `brain_ack` it.
 4. Did a memory turn out wrong? Say so to the person; `brain_supersede` or revise with a reason.
