@@ -1,6 +1,6 @@
 {
   "name": "cbox-brain",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Cbox Brain, your team's shared memory, wired into Claude Code: the project's context at session start (and again after a compaction), what changed in Brain on every prompt, a gate before deploy-shaped commands against the team's policies, a reminder to remember at stop, and what was learned carried through a compaction. Connect the MCP server first (`claude mcp add --transport http cbox-brain https://app.cboxbrain.com/mcp`), then sign the hooks in with `node scripts/brain.mjs login`; opt out with BRAIN_HOOKS=off or a .brain-ignore file.",
   "author": {
     "name": "Cbox",

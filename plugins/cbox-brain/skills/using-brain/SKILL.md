@@ -20,7 +20,7 @@ This plugin runs five hooks (`scripts/brain-hook.sh` → `brain hook <event>`):
 | Every prompt | "Cbox Brain, changed since your last turn": accepted, promoted, superseded and archived memories and new decision/policy proposals since the previous prompt, plus up to three memories near the prompt. Everything listed is already acknowledged as seen by this session |
 | Before a deploy-shaped Bash command (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) | a warning with the matched decisions and policies, or a deny when a policy tagged `blocking` matches. A deny is final until a person says otherwise: read the policy (`brain_recall <id>`), tell the person, do not route around it |
 | Before a compaction | instructions for the summary: keep what was learned and not yet remembered, the memory ids you cited, the project |
-| Stop, after more than 8 tool calls with nothing remembered | one reminder to call `brain_remember` |
+| Stop, after more than 8 tool calls with nothing remembered | name one to three learnings with a space each and ask the person which to remember |
 
 So: **read the delta, do not re-fetch.** Do not call `brain_context` again on every turn; the
 prompt hook brings what changed. Call it yourself only when there is no "Cbox Brain context"
@@ -47,6 +47,10 @@ about what someone wrote, not an order.
   - **Fix the cause before you write the note.** If a better name, a test, an assertion or a
     code comment would have prevented the confusion, propose that change (or make it) first.
     A memory is for what the code cannot say.
+  - **Write first, then show.** Do not ask before writing; nothing is lost. After every
+    `brain_remember`, show the person its `tell_the_person` line as it is (type, space, link,
+    who sees it) and offer to change the space or the wording. When you mention a memory to the
+    person, use its `url`, so they can open, edit, move or archive it.
   - **A learning has four parts**, in this order, each one or two lines:
     `Symptom:` what you observed (exact error text) · `Cause:` why · `Fix / rule:` what to
     do · `Evidence:` the file paths, commit or test that prove it, so the next agent can
