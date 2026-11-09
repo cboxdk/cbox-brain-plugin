@@ -44,7 +44,16 @@ Opt out per repository with a `.brain-ignore` file in its root, or everywhere wi
 
 ## Other clients
 
-Codex, Cursor, VS Code, Windsurf and Claude Desktop have no hooks. For them, your Brain's Agents page offers a rules block for `AGENTS.md`, `.cursor/rules` or `.windsurfrules` that states the same order of operations, and the exact MCP configuration per client.
+Codex, OpenCode, Cursor, VS Code, Windsurf and Claude Desktop have no hooks from Brain. For them, your Brain's Agents page offers a rules block for `AGENTS.md`, `.cursor/rules` or `.windsurfrules` that states the same order of operations, and the exact MCP configuration per client.
+
+OpenCode, for example:
+
+```bash
+opencode mcp add cbox-brain --url https://app.cboxbrain.com/mcp   # --global for every project
+opencode mcp auth cbox-brain                                      # or /mcps inside OpenCode
+```
+
+and the rules block in `AGENTS.md`, which OpenCode reads.
 
 ## Keeping the CLI current
 
