@@ -26,15 +26,15 @@ Requires Node 20 or newer. No dependencies: the CLI is one file, `plugins/cbox-b
 
 | Hook | What lands in the agent's context |
 |---|---|
-| `SessionStart` (also after a compaction) | "Cbox Brain context for `<project>`": the current decisions and policies, the nearest procedures and learnings, open contradictions and the tags to search by, labelled as a selection with each line's status. Shorter after a compaction |
+| `SessionStart` (also after a compaction) | "Cbox Brain context for `<project>`": the last session's handoff, the current decisions and policies, the open reminders, the nearest procedures and learnings, open contradictions and the tags to search by, labelled as a selection with each line's status. Shorter after a compaction |
 | `UserPromptSubmit` | what changed in Brain since the previous prompt (accepted, promoted, superseded, archived; new decision and policy proposals) plus up to three memories near the prompt, within about 1500 characters; a question about the past also gets a nudge to search Brain. The ids are acknowledged as seen, so the Decisions page shows which agents saw a decision |
-| `PreToolUse` (Bash) | a deploy-shaped command (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) goes through Brain's gate: a warning with the matched policies, or a deny when a policy tagged `blocking` matches |
-| `PreCompact` | instructions for the compaction summary: keep what was learned and not yet remembered, the memory ids cited, the project |
-| `Stop` | after more than eight tool calls with nothing remembered, one reminder to remember the learnings by itself and show where they went |
+| `PreToolUse` (Bash, edits, `brain_remember`, `brain_handoff`) | counts the work done; a deploy-shaped command (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) goes through Brain's gate: a warning with the matched policies, or a deny when a policy tagged `blocking` matches |
+| `PreCompact` | instructions for the compaction summary: keep what was learned and not yet remembered, the memory ids cited, the project, and what is left to do |
+| `Stop` | after more than eight tool calls with nothing remembered, one reminder to remember the learnings by itself and show where they went; after files changed or a commit with no handoff, one reminder to write `brain_handoff` if the work is unfinished |
 
 The agent reads the delta instead of re-fetching, so the cost per turn is small: one request to `/api/v1/changes` with a cursor kept in `~/.cache/cbox-brain/<project>.cursor`.
 
-The `using-brain` skill tells the agent when to call which tool: `brain_context` at the start, `brain_search` before writing or deciding, `brain_remember` after a learning or a decision, `brain_ack` when acting on a decision, `brain_supersede` when a decision changes.
+The `using-brain` skill tells the agent when to call which tool: `brain_context` at the start, `brain_search` before writing or deciding, `brain_remember` after a learning or a decision, `brain_ack` when acting on a decision, `brain_supersede` when a decision changes, a reminder for what belongs to other work, and `brain_handoff` before stopping with work unfinished.
 
 ## Fails open, never breaks a session
 

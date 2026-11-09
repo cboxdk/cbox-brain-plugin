@@ -1,5 +1,5 @@
 {
-  "description": "Cbox Brain live memory: context at session start (re-injected after a compaction), what changed on every prompt, a gate on deploy-shaped commands, a reminder to remember at stop, what was learned carried through a compaction.",
+  "description": "Cbox Brain live memory: context at session start (re-injected after a compaction, with the last handoff and the open reminders), what changed on every prompt, a gate on deploy-shaped commands, a reminder to remember and to hand off unfinished work at stop, what was learned and what is left carried through a compaction.",
   "hooks": {
     "SessionStart": [
       {
@@ -35,7 +35,17 @@
         ]
       },
       {
-        "matcher": "mcp__.*brain_remember",
+        "matcher": "mcp__.*brain_(remember|handoff)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/brain-hook.sh pre-tool",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
