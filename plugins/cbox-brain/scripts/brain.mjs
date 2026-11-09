@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit 9587202, 2026-11-09, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
+// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit d53efbc, 2026-11-09, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
 // The Cbox Brain command line: sign in with Cbox ID, call the REST API and the MCP tools,
 // run as a Claude Code hook, and import memory from Claude Code and Codex. Node 22+, no dependencies.
 //
@@ -48,7 +48,7 @@ const CONFIG_DIR = process.env.CBOX_BRAIN_CONFIG ?? join(HOME, '.config', 'cbox-
 const CACHE_DIR = process.env.BRAIN_CACHE_DIR ?? join(process.env.XDG_CACHE_HOME ?? join(HOME, '.cache'), 'cbox-brain');
 const CREDENTIALS = join(CONFIG_DIR, 'credentials.json');
 const DEFAULT_SERVER = 'https://app.cboxbrain.com';
-const VERSION = '0.5.1';
+const VERSION = '0.5.2';
 const CALLBACK_PORT = Number(process.env.CBOX_BRAIN_CALLBACK_PORT ?? 8765);
 const REDIRECT_URI = `http://127.0.0.1:${CALLBACK_PORT}/callback`;
 
@@ -402,7 +402,7 @@ async function changesCommand() {
 
 async function gateCommand(text) {
     if (!text) fail('usage: brain gate <text...> [--paths a,b]');
-    const result = await api('gate', { body: { text, paths: list(flags.paths), ...(space() ? { space: space() } : {}) } });
+    const result = await api('gate', { body: { text, paths: list(flags.paths), ...(space() ? { space: space() } : { project: project() }) } });
     if (flags.json) json(result);
     else {
         out(`${result.verdict}${result.note ? `: ${result.note}` : ''}`);
@@ -681,7 +681,7 @@ async function hookPreTool(input, project) {
     const remembered = /brain_remember|brain(\.mjs)?\s+remember\b/.test(tool === 'Bash' ? command : tool);
     touchSession(project, input.session_id ?? SESSION_ID(), (s) => ({ tools: (s.tools ?? 0) + 1, remembered: Boolean(s.remembered) || remembered }));
     if (tool !== 'Bash' || !GATE_PATTERN.test(command)) return;
-    const result = await api('gate', { body: { text: command, paths: [], ...(process.env.BRAIN_SPACE ? { space: process.env.BRAIN_SPACE } : {}) } });
+    const result = await api('gate', { body: { text: command, paths: [], ...(process.env.BRAIN_SPACE ? { space: process.env.BRAIN_SPACE } : { project }) } });
     const memories = result.memories ?? [];
     const subjects = memories.map((m) => `"${m.subject}"${m.why ? ` (${m.why})` : ''}`).join('; ');
     if (result.verdict === 'block') {
