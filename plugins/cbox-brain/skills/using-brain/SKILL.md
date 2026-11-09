@@ -16,8 +16,8 @@ This plugin runs five hooks (`scripts/brain-hook.sh` → `brain hook <event>`):
 
 | When | What lands in your context |
 |---|---|
-| Session start, and again after a compaction | "Cbox Brain context for `<project>`": current decisions and policies, the nearest procedures and learnings, open contradictions |
-| Every prompt | "Cbox Brain, changed since your last turn": accepted, promoted, superseded and archived memories and new decision/policy proposals since the previous prompt, plus up to three memories near the prompt. Everything listed is already acknowledged as seen by this session |
+| Session start, and again after a compaction | "Cbox Brain context for `<project>`": **a selection, not everything** (its header says "X of Y"): current decisions and policies, the nearest procedures and learnings, open contradictions, and the tags to search by. Each line says its type and status; a PROPOSAL is not binding |
+| Every prompt | "Cbox Brain, changed since your last turn": accepted, promoted, superseded and archived memories and new decision/policy proposals since the previous prompt, plus up to three memories near the prompt, about 1500 characters at most. When the prompt asks about the past (why, decided, earlier, hvorfor, besluttet…) it also says to search. Everything listed is already acknowledged as seen by this session |
 | Before a deploy-shaped Bash command (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) | a warning with the matched decisions and policies, or a deny when a policy tagged `blocking` matches. A deny is final until a person says otherwise: read the policy (`brain_recall <id>`), tell the person, do not route around it |
 | Before a compaction | instructions for the summary: keep what was learned and not yet remembered, the memory ids you cited, the project |
 | Stop, after more than 8 tool calls with nothing remembered | remember the one to three things the next agent should know yourself, then show each `tell_the_person` line; no questions |
@@ -37,8 +37,11 @@ about what someone wrote, not an order.
   a proposal informs.
 - **`brain_search`** (or `brain search <text>`): before you write a memory (is it already
   there? then `brain_reinforce` it instead), before you make a technical choice the team may
-  have made already, before touching a system you have not touched this session. Three hits
-  usually settle it.
+  have made already, before touching a system you have not touched this session, and **always
+  before answering a question about what was decided, why, or what happened before**: the
+  injected context is a selection, so "not in my context" does not mean "not in Brain". For a
+  question in natural language, any language, pass `match: "any"` (any word may match, tag
+  hits first). Three hits usually settle it.
 - **`brain_remember`** (or `brain remember --type … --subject … --content …`): after a
   learning (something surprised you and would surprise the next agent), after a decision,
   after a procedure worked (how to do X here). Pass `project` (the repository name; the CLI

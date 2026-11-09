@@ -26,8 +26,8 @@ Requires Node 20 or newer. No dependencies: the CLI is one file, `plugins/cbox-b
 
 | Hook | What lands in the agent's context |
 |---|---|
-| `SessionStart` (also after a compaction) | "Cbox Brain context for `<project>`": the current decisions and policies, the nearest procedures and learnings, open contradictions. Shorter after a compaction |
-| `UserPromptSubmit` | what changed in Brain since the previous prompt (accepted, promoted, superseded, archived; new decision and policy proposals) plus up to three memories near the prompt. The ids are acknowledged as seen, so the Decisions page shows which agents saw a decision |
+| `SessionStart` (also after a compaction) | "Cbox Brain context for `<project>`": the current decisions and policies, the nearest procedures and learnings, open contradictions and the tags to search by, labelled as a selection with each line's status. Shorter after a compaction |
+| `UserPromptSubmit` | what changed in Brain since the previous prompt (accepted, promoted, superseded, archived; new decision and policy proposals) plus up to three memories near the prompt, within about 1500 characters; a question about the past also gets a nudge to search Brain. The ids are acknowledged as seen, so the Decisions page shows which agents saw a decision |
 | `PreToolUse` (Bash) | a deploy-shaped command (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) goes through Brain's gate: a warning with the matched policies, or a deny when a policy tagged `blocking` matches |
 | `PreCompact` | instructions for the compaction summary: keep what was learned and not yet remembered, the memory ids cited, the project |
 | `Stop` | after more than eight tool calls with nothing remembered, one reminder to remember the learnings by itself and show where they went |
