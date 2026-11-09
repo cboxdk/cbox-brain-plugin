@@ -30,7 +30,7 @@ Requires Node 20 or newer. No dependencies: the CLI is one file, `plugins/cbox-b
 | `UserPromptSubmit` | what changed in Brain since the previous prompt (accepted, promoted, superseded, archived; new decision and policy proposals) plus up to three memories near the prompt. The ids are acknowledged as seen, so the Decisions page shows which agents saw a decision |
 | `PreToolUse` (Bash) | a deploy-shaped command (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) goes through Brain's gate: a warning with the matched policies, or a deny when a policy tagged `blocking` matches |
 | `PreCompact` | instructions for the compaction summary: keep what was learned and not yet remembered, the memory ids cited, the project |
-| `Stop` | after more than eight tool calls with nothing remembered, one reminder to call `brain_remember` |
+| `Stop` | after more than eight tool calls with nothing remembered, one reminder to remember the learnings by itself and show where they went |
 
 The agent reads the delta instead of re-fetching, so the cost per turn is small: one request to `/api/v1/changes` with a cursor kept in `~/.cache/cbox-brain/<project>.cursor`.
 

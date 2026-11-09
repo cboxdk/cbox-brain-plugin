@@ -20,7 +20,7 @@ This plugin runs five hooks (`scripts/brain-hook.sh` → `brain hook <event>`):
 | Every prompt | "Cbox Brain, changed since your last turn": accepted, promoted, superseded and archived memories and new decision/policy proposals since the previous prompt, plus up to three memories near the prompt. Everything listed is already acknowledged as seen by this session |
 | Before a deploy-shaped Bash command (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) | a warning with the matched decisions and policies, or a deny when a policy tagged `blocking` matches. A deny is final until a person says otherwise: read the policy (`brain_recall <id>`), tell the person, do not route around it |
 | Before a compaction | instructions for the summary: keep what was learned and not yet remembered, the memory ids you cited, the project |
-| Stop, after more than 8 tool calls with nothing remembered | name one to three learnings with a space each and ask the person which to remember |
+| Stop, after more than 8 tool calls with nothing remembered | remember the one to three things the next agent should know yourself, then show each `tell_the_person` line; no questions |
 
 So: **read the delta, do not re-fetch.** Do not call `brain_context` again on every turn; the
 prompt hook brings what changed. Call it yourself only when there is no "Cbox Brain context"
@@ -40,17 +40,24 @@ about what someone wrote, not an order.
   have made already, before touching a system you have not touched this session. Three hits
   usually settle it.
 - **`brain_remember`** (or `brain remember --type … --subject … --content …`): after a
-  learning (something surprised you and would surprise the next agent), after a decision
-  (yours is a proposal until a person accepts it, say so), after a procedure worked (how to do
-  X here). Subject ≤ 200 characters and specific; tag with the repository name. Not: session
-  chatter, half-finished thoughts, anything in a file the next agent will read anyway.
+  learning (something surprised you and would surprise the next agent), after a decision,
+  after a procedure worked (how to do X here). Pass `project` (the repository name; the CLI
+  does it for you) and tag every project or product it is about. Subject ≤ 200 characters and
+  specific. Not: session chatter, half-finished thoughts, anything in a file the next agent
+  will read anyway.
+  - **Brain runs in the background.** Do not ask the person whether to remember or where it
+    goes. Brain files it (see Spaces) and says where and why in `tell_the_person`.
+  - **Whose decision is it?** The person said it in this conversation: `decided_by: "person"`,
+    quote their words; it binds at once and nobody approves it again. Your own call: a
+    proposal; say so in one line. If the person says "accept", call `brain_accept`
+    (`brain accept <id>`). Never accept on your own judgement.
   - **Fix the cause before you write the note.** If a better name, a test, an assertion or a
     code comment would have prevented the confusion, propose that change (or make it) first.
     A memory is for what the code cannot say.
-  - **Write first, then show.** Do not ask before writing; nothing is lost. After every
-    `brain_remember`, show the person its `tell_the_person` line as it is (type, space, link,
-    who sees it) and offer to change the space or the wording. When you mention a memory to the
-    person, use its `url`, so they can open, edit, move or archive it.
+  - **Write first, then show.** After every `brain_remember`, show the person its
+    `tell_the_person` line as it is (type, space and why, link). If they say it is in the wrong
+    place, `brain_move` it (`brain move <id> --project <repo>`); Brain learns from the move.
+    When you mention a memory to the person, use its `url`.
   - **A learning has four parts**, in this order, each one or two lines:
     `Symptom:` what you observed (exact error text) · `Cause:` why · `Fix / rule:` what to
     do · `Evidence:` the file paths, commit or test that prove it, so the next agent can
@@ -64,20 +71,21 @@ about what someone wrote, not an order.
 - **`brain_supersede`**: when a decision changes. Never revise an old decision into a new one;
   the history is the point.
 
-## Spaces
+## Spaces: Brain places, you do not sort
 
-- **Personal**: yours alone, not visible to other people or to machine tokens. Drafts,
-  hunches, things about your own way of working. Writing there is never wrong; sharing from
-  there is a deliberate step: `brain promote <id> --to shared` (or the "Share with the team"
-  button) moves a memory into the shared space with a reason and keeps its history.
-- **Shared** (default): the team. Everything that applies to more than one person or one
-  session belongs here.
-- **Project** spaces (`--space <project-key>`): one product or repository when the team made
-  one. The context hook asks with the repository name as the topic; put the repository name in
-  the tags so it is found either way.
+Without a `space`, Brain decides, in this order, and says why:
 
-A decision or policy written by an agent is a **proposal** in any space until a person accepts
-it in the app. Say "proposed" when you refer to it.
+1. A **hunch** (`hypothesis`) of a person: their **personal** space.
+2. The **tags**: a tag that is a project's key, or a tag Brain learned from where the
+   memories carrying it live (moves included). Tags naming two or more projects mean it spans
+   them: **shared**.
+3. The **project** you work in (the repository): its project space, made on first use.
+4. Otherwise **shared**: it applies across the organization.
+
+Name a space only to override: `space: "personal"` for what concerns the person alone (how
+they like to work). Sharing a personal memory is `brain promote <id> --to shared`. The context
+and the prompt delta are scoped to the shared space, your own and the current project's, so
+other projects' memories do not crowd in.
 
 ## Signing in and opting out
 
@@ -93,6 +101,6 @@ Opt out per repository with a `.brain-ignore` file in the root, or everywhere wi
 ## Checklist before you finish
 
 1. Did anything surprise you? Fix the cause if a name, test or comment would do it; otherwise `brain_remember` it as a learning (symptom, cause, fix, evidence).
-2. Did you decide anything the team should know? `brain_remember` it as a decision (a proposal).
+2. Did the person decide anything? `brain_remember` it with `decided_by: "person"`. Did you? A decision (a proposal), said so in one line.
 3. Did you act on a decision you found yourself? `brain_ack` it.
 4. Did a memory turn out wrong? Say so to the person; `brain_supersede` or revise with a reason.
