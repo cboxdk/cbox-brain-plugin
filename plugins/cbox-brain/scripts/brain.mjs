@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit 32d9d01, 2026-11-09, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
+// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit 89b7824, 2026-11-10, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
 // The Cbox Brain command line: sign in with Cbox ID, call the REST API and the MCP tools,
 // run as a Claude Code hook, and import memory from Claude Code and Codex. Node 22+, no dependencies.
 //
 //   brain login [--server https://app.cboxbrain.com]   # Cbox ID in the browser (PKCE); --hint <id> for CIBA, --device for the device grant
+//   brain login --org <slug>                                    # one more organization: Cbox ID binds a token to one, the repository picks which
+//   brain orgs                                                  # your organizations, which you are signed in to, and which one this repository uses
+//   brain org set <slug> | brain org unset                      # pin this repository to an organization (else its projects decide)
+//   brain mcp                                                   # an MCP server on stdio: forwards to Brain in this repository's organization
 //   brain context [--project <tag>] [--query <text>] [--space <key>] [--budget <chars>]
 //   brain changes [--since <cursor> | --cursor-file <path>] [--kind accepted,promoted,...] [--space <key>] [--limit <n>]
 //   brain gate <text...> [--paths a,b] [--space <key>]          # exit 2 when a blocking policy matches
@@ -16,8 +20,8 @@
 //   brain hook session-start|prompt|pre-tool|stop|pre-compact # Claude Code hook JSON on stdin, hook output on stdout
 //   brain whoami | tools | call <tool> ['{"json":"arguments"}'] | import claude|codex [--dry-run]
 //
-// Flags everywhere: --json (machine output), --server <url>, --agent <name>. Exit 0 ok, 1 error, 2 blocked.
-// Environment: BRAIN_SERVER, BRAIN_TOKEN (a bearer that skips OAuth), BRAIN_SPACE, BRAIN_AGENT,
+// Flags everywhere: --json (machine output), --server <url>, --agent <name>, --org <slug>. Exit 0 ok, 1 error, 2 blocked.
+// Environment: BRAIN_SERVER, BRAIN_TOKEN (a bearer that skips OAuth), BRAIN_ORG, BRAIN_SPACE, BRAIN_AGENT,
 // BRAIN_SESSION / CLAUDE_SESSION_ID, BRAIN_HOOKS=off, BRAIN_TIMEOUT (ms), BRAIN_CACHE_DIR, CBOX_BRAIN_CONFIG.
 // Credentials live in ~/.config/cbox-brain/credentials.json (mode 600). Nothing here prints a token.
 
@@ -26,12 +30,15 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
+import { createInterface } from 'node:readline';
 import { execFileSync } from 'node:child_process';
 
 // ---- the Brain REST API this CLI speaks (spec: docs/superpowers/specs/2026-11-08-live-memory-round.md §1) ----
 // Every request shape in one place so a change on the server side is a one-line adjustment here.
 const API = {
     context: { method: 'GET', path: '/api/v1/context' },                       // ?space&query&budget → {context, truncated, items, spaces}
+    organizations: { method: 'GET', path: '/api/v1/me/organizations' },       // → {current, organizations:[{id, cbox_id, slug, name, current, projects:[{key, name, repositories, moved_to}]}]}
+    me: { method: 'GET', path: '/api/v1/me' },                                 // → {kind, user, organization:{id, slug, name}, ...}
     changes: { method: 'GET', path: '/api/v1/changes' },                       // ?since&kind[]&space&limit → {cursor, changes:[{at,cursor,kind,memory,actor,note}], more}
     gate: { method: 'POST', path: '/api/v1/gate' },                            // {text, paths[], space?} → {verdict: allow|warn|block, memories:[summary+why], note}
     ack: { method: 'POST', path: '/api/v1/acknowledgements' },                 // {ids[] ≤ 50} → {acknowledged, unchanged, ...}
@@ -41,14 +48,16 @@ const API = {
     accept: { method: 'POST', path: (id) => `/api/v1/memories/${encodeURIComponent(id)}/accept` },   // {} → {memory, note}
     move: { method: 'POST', path: (id) => `/api/v1/memories/${encodeURIComponent(id)}/move` },       // {project? | space?, reason?} → {memory, note}
 };
-const CHANGE_KINDS = ['created', 'revised', 'accepted', 'superseded', 'archived', 'unarchived', 'reinforced', 'restored', 'promoted', 'moved', 'acknowledged'];
+const CHANGE_KINDS = ['created', 'revised', 'accepted', 'superseded', 'archived', 'unarchived', 'reinforced', 'restored', 'promoted', 'moved', 'acknowledged', 'transferred'];
 
 const HOME = homedir();
 const CONFIG_DIR = process.env.CBOX_BRAIN_CONFIG ?? join(HOME, '.config', 'cbox-brain');
 const CACHE_DIR = process.env.BRAIN_CACHE_DIR ?? join(process.env.XDG_CACHE_HOME ?? join(HOME, '.cache'), 'cbox-brain');
 const CREDENTIALS = join(CONFIG_DIR, 'credentials.json');
+const ORGANIZATIONS_CACHE = join(CACHE_DIR, 'organizations.json');
+const ORGANIZATIONS_TTL = 15 * 60_000; // which repository lives in which organization changes rarely
 const DEFAULT_SERVER = 'https://app.cboxbrain.com';
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 const CALLBACK_PORT = Number(process.env.CBOX_BRAIN_CALLBACK_PORT ?? 8765);
 const REDIRECT_URI = `http://127.0.0.1:${CALLBACK_PORT}/callback`;
 
@@ -78,6 +87,9 @@ function loadCredentials() {
 }
 
 function saveCredentials(data) {
+    // A new sign-in replaces the default grant, never the other organizations' or the pins.
+    const kept = loadCredentials();
+    data = { orgs: kept?.orgs, repos: kept?.repos, ...data };
     mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
     writeFileSync(CREDENTIALS, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
     chmodSync(CREDENTIALS, 0o600);
@@ -131,12 +143,14 @@ async function registerClient(as, stored) {
 const b64url = (buffer) => buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 /** Authorization code with PKCE: the browser does the sign-in, a local listener takes the code. */
-async function authorizationCode(d, client, scope, server) {
+async function authorizationCode(d, client, scope, server, organization) {
     const verifier = b64url(randomBytes(48));
     const challenge = b64url(createHash('sha256').update(verifier).digest());
     const state = b64url(randomBytes(16));
     const url = new URL(d.as.authorization_endpoint);
     for (const [k, v] of Object.entries({ response_type: 'code', client_id: client.id, redirect_uri: REDIRECT_URI, scope, state, code_challenge: challenge, code_challenge_method: 'S256', resource: d.resource })) url.searchParams.set(k, v);
+    // Cbox ID binds the grant to this organization (one per grant; a refresh keeps it).
+    if (organization) url.searchParams.set('organization', organization);
 
     const code = await new Promise((resolve, reject) => {
         const httpServer = createServer((req, res) => {
@@ -166,9 +180,12 @@ async function authorizationCode(d, client, scope, server) {
         body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI, code_verifier: verifier, ...clientAuth(client), resource: d.resource }),
     });
     if (!token?.access_token) fail(`token exchange failed: ${token?.error ?? 'unknown'} ${token?.error_description ?? ''}`);
+    if (organization) return token;
     saveCredentials({ server, issuer: d.issuer, client_id: client.id, client_secret: client.secret, token_endpoint: d.as.token_endpoint, resource: d.resource, access_token: token.access_token, refresh_token: token.refresh_token ?? null, expires_at: Date.now() + 1000 * Number(token.expires_in ?? 3600), scope: token.scope ?? scope });
     say('Signed in. Credentials saved to ' + CREDENTIALS);
+    await rememberDefaultOrganization();
     out(await call('brain_spaces', {}));
+    return token;
 }
 
 function clientAuth(client) {
@@ -189,6 +206,7 @@ async function pollToken(d, client, grant, extra, intervalSeconds, expiresIn, sc
         if (token?.access_token) {
             saveCredentials({ server, issuer: d.issuer, client_id: client.id, client_secret: client.secret, token_endpoint: d.as.token_endpoint, resource: d.resource, access_token: token.access_token, refresh_token: token.refresh_token ?? null, expires_at: Date.now() + 1000 * Number(token.expires_in ?? 3600), scope: token.scope ?? scope });
             say('Signed in. Credentials saved to ' + CREDENTIALS);
+            await rememberDefaultOrganization();
             out(await call('brain_spaces', {}));
             return;
         }
@@ -200,6 +218,7 @@ async function pollToken(d, client, grant, extra, intervalSeconds, expiresIn, sc
 }
 
 async function login() {
+    if (str(flags.org)) { await loginOrganization(str(flags.org)); return; }
     const stored = loadCredentials();
     const server = (str(flags.server) ?? process.env.BRAIN_SERVER ?? stored?.server ?? DEFAULT_SERVER).replace(/\/$/, '');
     const d = await discover(server);
@@ -249,20 +268,148 @@ function signedIn() {
     return Boolean(process.env.BRAIN_TOKEN) || Boolean(loadCredentials()?.access_token);
 }
 
-async function accessToken() {
-    const c = loadCredentials();
-    if (!c?.access_token) fail('not signed in; run: brain login (or set BRAIN_TOKEN)');
-    if (Date.now() < c.expires_at - 60_000) return c;
-    if (!c.refresh_token) fail('the token expired and there is no refresh token; run: brain login');
+async function refreshed(c, grant) {
+    if (Date.now() < grant.expires_at - 60_000) return grant;
+    if (!grant.refresh_token) throw new Error('the token expired and there is no refresh token; run: brain login');
     const { json } = await getJson(c.token_endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: c.refresh_token, ...clientAuth({ id: c.client_id, secret: c.client_secret ?? null }), resource: c.resource }),
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: grant.refresh_token, ...clientAuth({ id: c.client_id, secret: c.client_secret ?? null }), resource: c.resource }),
     });
-    if (!json?.access_token) fail(`refresh failed: ${json?.error ?? 'unknown'}; run: brain login`);
-    const next = { ...c, access_token: json.access_token, refresh_token: json.refresh_token ?? c.refresh_token, expires_at: Date.now() + 1000 * Number(json.expires_in ?? 3600) };
-    saveCredentials(next);
-    return next;
+    if (!json?.access_token) throw new Error(`refresh failed: ${json?.error ?? 'unknown'}; run: brain login${grant.cbox_id ? ' --org <slug>' : ''}`);
+    return { ...grant, access_token: json.access_token, refresh_token: json.refresh_token ?? grant.refresh_token, expires_at: Date.now() + 1000 * Number(json.expires_in ?? 3600) };
+}
+
+/** A repository that lives in an organization this machine has no sign-in for yet. */
+class NeedsOrganization extends Error {
+    constructor(slug, name) { super(`This repository belongs to ${name ?? slug} in Cbox Brain. Sign in to it once: brain login --org ${slug}`); this.slug = slug; }
+}
+
+/**
+ * The grant for an organization: the default sign-in (the organization Cbox ID chose at the
+ * first login), or the one `brain login --org <slug>` added. Refreshed and saved as needed.
+ */
+async function accessToken(slug) {
+    const c = loadCredentials();
+    if (!c?.access_token) throw new Error('not signed in; run: brain login (or set BRAIN_TOKEN)');
+    if (!slug || slug === c.default_org) {
+        const next = await refreshed(c, c);
+        if (next !== c) saveCredentials(next);
+        return next;
+    }
+    const grant = c.orgs?.[slug];
+    if (!grant) throw new NeedsOrganization(slug, null);
+    const next = await refreshed(c, grant);
+    if (next !== grant) saveCredentials({ ...loadCredentials(), orgs: { ...(loadCredentials()?.orgs ?? {}), [slug]: next } });
+    return { ...next, server: c.server };
+}
+
+/** The organization the default sign-in is bound to, asked once and kept. */
+async function rememberDefaultOrganization() {
+    const c = loadCredentials();
+    if (!c?.access_token) return null;
+    if (c.default_org) return c.default_org;
+    const token = await accessToken(null);
+    const { response, json } = await getJson(new URL(API.me.path, str(flags.server) ?? process.env.BRAIN_SERVER ?? c.server), { headers: headers(token.access_token), signal: AbortSignal.timeout(TIMEOUT()) });
+    const slug = response.ok ? json?.organization?.slug : null;
+    if (slug) saveCredentials({ ...loadCredentials(), default_org: slug });
+    return slug ?? null;
+}
+
+/** Your organizations and which repositories belong to which, cached for a quarter of an hour. */
+async function organizations(force = false) {
+    if (!force && existsSync(ORGANIZATIONS_CACHE)) {
+        try {
+            const cached = JSON.parse(readFileSync(ORGANIZATIONS_CACHE, 'utf8'));
+            if (Date.now() - cached.fetched_at < ORGANIZATIONS_TTL) return cached.data;
+        } catch { /* fetch again */ }
+    }
+    const c = loadCredentials();
+    const token = await accessToken(null);
+    const { response, json } = await getJson(new URL(API.organizations.path, str(flags.server) ?? process.env.BRAIN_SERVER ?? c.server), { headers: headers(token.access_token), signal: AbortSignal.timeout(TIMEOUT()) });
+    if (!response.ok || !json?.organizations) throw new ApiError(response.status, json, '');
+    mkdirSync(CACHE_DIR, { recursive: true });
+    writeFileSync(ORGANIZATIONS_CACHE, JSON.stringify({ fetched_at: Date.now(), data: json }));
+    if (json.current && !c.default_org) saveCredentials({ ...loadCredentials(), default_org: json.current });
+    return json;
+}
+
+const forgetOrganizations = () => { try { writeFileSync(ORGANIZATIONS_CACHE, '{}'); } catch { /* nothing cached */ } };
+const repoKey = (name) => String(name ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+/**
+ * Which organization a call is for: --org or BRAIN_ORG, a pin for this repository (brain org
+ * set), else the organization whose project holds the repository (where it went, when it
+ * was handed over). Null means the default sign-in. Two organizations claiming the same
+ * repository is an error the person settles once with a pin, never a guess.
+ */
+async function resolveOrganization(cwd = workDir) {
+    if (process.env.BRAIN_TOKEN) return null;
+    const explicit = str(flags.org) ?? process.env.BRAIN_ORG;
+    if (explicit) return explicit;
+    const repo = repoKey(repoProject(cwd));
+    if (!repo) return null;
+    const pinned = loadCredentials()?.repos?.[repo];
+    if (pinned) return pinned;
+    let map;
+    try { map = await organizations(); } catch { return null; }
+    const owners = new Set();
+    for (const organization of map.organizations ?? []) {
+        for (const project of organization.projects ?? []) {
+            if (!(project.repositories ?? []).map(repoKey).includes(repo)) continue;
+            if (project.moved_to === null || project.moved_to === undefined) owners.add(organization.slug);
+            else if (project.moved_to !== '') owners.add(project.moved_to);
+        }
+    }
+    if (owners.size > 1) throw new Error(`${repo} is a project in ${[...owners].join(' and ')}; pin one for this repository: brain org set <slug>`);
+    const [owner] = [...owners];
+    if (!owner || owner === map.current) return null;
+    if (!loadCredentials()?.orgs?.[owner]) throw new NeedsOrganization(owner, (map.organizations ?? []).find((o) => o.slug === owner)?.name);
+    return owner;
+}
+
+/** brain login --org <slug>: a second (third…) organization, in the browser, bound by Cbox ID. */
+async function loginOrganization(slug) {
+    const stored = loadCredentials();
+    if (!stored?.access_token) fail('sign in first: brain login (that sign-in becomes your default organization)');
+    const map = await organizations(true);
+    const organization = (map.organizations ?? []).find((o) => o.slug === slug);
+    if (!organization) fail(`you are not a member of "${slug}" in Cbox Brain; brain orgs lists yours`);
+    if (organization.slug === (await rememberDefaultOrganization())) { say(`${organization.name} is already your default sign-in.`); return; }
+    if (!organization.cbox_id) fail(`${organization.name} has no Cbox ID organization id; ask Brain's operator`);
+    const d = await discover(stored.server);
+    const scope = [...d.scopes, 'offline_access'].join(' ');
+    const token = await authorizationCode(d, { id: stored.client_id, secret: stored.client_secret ?? null }, scope, stored.server, organization.cbox_id);
+    const grant = { access_token: token.access_token, refresh_token: token.refresh_token ?? null, expires_at: Date.now() + 1000 * Number(token.expires_in ?? 3600), scope: token.scope ?? scope, cbox_id: organization.cbox_id, name: organization.name };
+    const c = loadCredentials();
+    saveCredentials({ ...c, orgs: { ...(c?.orgs ?? {}), [slug]: grant } });
+    say(`Signed in to ${organization.name}. Repositories that belong to it now use it.`);
+}
+
+async function orgsCommand() {
+    const map = await organizations(true);
+    const c = loadCredentials();
+    let here = null;
+    try { here = (await resolveOrganization()) ?? map.current; } catch (error) { here = error instanceof NeedsOrganization ? error.slug : null; }
+    if (flags.json) { json({ ...map, signed_in: [map.current, ...Object.keys(c?.orgs ?? {})], repository: repoProject(workDir), uses: here }); return; }
+    for (const organization of map.organizations ?? []) {
+        const state = organization.slug === map.current ? 'default sign-in' : c?.orgs?.[organization.slug] ? 'signed in' : `not signed in (brain login --org ${organization.slug})`;
+        out(`${organization.slug === here ? '→' : ' '} ${organization.slug.padEnd(24)} ${organization.name.padEnd(28)} ${state}`);
+    }
+    const repo = repoProject(workDir);
+    if (repo) out(`\nThis repository (${repo}) uses ${here ?? map.current}.`);
+}
+
+function orgCommand(action, slug) {
+    const repo = repoKey(repoProject(workDir));
+    if (!repo) fail('not in a git repository with a remote');
+    const c = loadCredentials() ?? {};
+    const repos = { ...(c.repos ?? {}) };
+    if (action === 'set' && slug) repos[repo] = slug;
+    else if (action === 'unset') delete repos[repo];
+    else fail('usage: brain org set <slug> | brain org unset');
+    saveCredentials({ ...c, repos });
+    say(action === 'set' ? `${repo} now uses ${slug}.` : `${repo} follows its projects again.`);
 }
 
 /** The server and bearer for a call: BRAIN_TOKEN skips OAuth (the local bearer, or a machine token). */
@@ -270,9 +417,12 @@ async function auth() {
     const stored = loadCredentials();
     const server = (str(flags.server) ?? process.env.BRAIN_SERVER ?? stored?.server ?? DEFAULT_SERVER).replace(/\/$/, '');
     if (process.env.BRAIN_TOKEN) return { server, token: process.env.BRAIN_TOKEN };
-    const c = await accessToken();
-    return { server: str(flags.server) ?? process.env.BRAIN_SERVER ?? c.server, token: c.access_token };
+    const c = await accessToken(await resolveOrganization());
+    return { server: str(flags.server) ?? process.env.BRAIN_SERVER ?? c.server ?? stored?.server, token: c.access_token };
 }
+
+/** The directory whose repository decides the organization: the hook's cwd, else the process's. */
+let workDir = process.cwd();
 
 // ---- identity of this process: agent, session ----------------------------------------------
 
@@ -323,20 +473,22 @@ async function api(name, { query, body, id } = {}) {
     const init = { method: def.method, headers: headers(token), signal: AbortSignal.timeout(TIMEOUT()) };
     if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
     const { response, json, text } = await getJson(url, init);
+    // The server says the repository or memory lives in another organization: route again next time.
+    if (response.status === 409 || response.status === 404) { if (/belongs to|lives in/.test(String(json?.error_description ?? ''))) forgetOrganizations(); }
     if (!response.ok) throw new ApiError(response.status, json, text);
     return json;
 }
 
 let rpcId = 0;
 async function rpc(method, params) {
-    const c = await accessToken();
+    const c = await auth();
     const agent = str(flags.agent) ?? process.env.BRAIN_AGENT ?? 'cbox-brain-cli';
-    const { response, json, text } = await getJson(new URL('/mcp', str(flags.server) ?? process.env.BRAIN_SERVER ?? c.server), {
+    const { response, json, text } = await getJson(new URL('/mcp', c.server), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             Accept: 'application/json, text/event-stream',
-            Authorization: `Bearer ${c.access_token}`,
+            Authorization: `Bearer ${c.token}`,
             'User-Agent': `${agent}/${VERSION} (cbox-brain-cli)`,
             'MCP-Protocol-Version': '2025-06-18',
             'X-Brain-Session': SESSION_ID(),
@@ -730,8 +882,15 @@ async function hook(event) {
         if (existsSync(join(cwd, '.brain-ignore'))) return;
         if (!signedIn()) return;
         if (str(input.session_id)) hookSession = input.session_id;
+        workDir = cwd;
         await handlers[event](input, projectTag(cwd));
     } catch (error) {
+        // The repository lives in an organization this machine is not signed in to: say so
+        // once, at session start, instead of reading the wrong organization's memory.
+        if (error instanceof NeedsOrganization && event === 'session-start') {
+            hookOutput('SessionStart', { additionalContext: `Cbox Brain: ${error.message} Until then nothing from Brain is read or written for this repository. Tell the person this in one line.` });
+            return;
+        }
         // Never fail the session: no stdout, exit 0. One line on stderr for whoever is debugging.
         say('brain hook', event + ':', error instanceof Error ? error.message : String(error));
     }
@@ -864,6 +1023,63 @@ async function runImport(origin, items, space) {
     out(JSON.stringify(totals));
 }
 
+// ---- MCP on stdio -------------------------------------------------------------------------
+
+/**
+ * An MCP server on stdio that forwards every message to Brain's /mcp with the token of the
+ * organization this repository belongs to, so an agent's tools act in the right
+ * organization without a second server per organization. Newline-delimited JSON-RPC in,
+ * the same out; stdout carries nothing else.
+ */
+async function mcpProxy() {
+    const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    const write = (message) => process.stdout.write(JSON.stringify(message) + '\n');
+    let session = null;
+    let protocol = '2025-06-18';
+    let client = str(flags.agent) ?? process.env.BRAIN_AGENT ?? null;
+
+    for await (const line of lines) {
+        if (!line.trim()) continue;
+        let message;
+        try { message = JSON.parse(line); } catch { continue; }
+        const id = message?.id;
+        if (message?.method === 'initialize') {
+            client ??= str(message.params?.clientInfo?.name) ?? null;
+            protocol = str(message.params?.protocolVersion) ?? protocol;
+        }
+        try {
+            const { server, token } = await auth();
+            const response = await fetch(new URL('/mcp', server), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json, text/event-stream',
+                    Authorization: `Bearer ${token}`,
+                    'User-Agent': `${client ?? 'cbox-brain-cli'}/${VERSION} (cbox-brain-cli)`,
+                    'MCP-Protocol-Version': protocol,
+                    'X-Brain-Session': SESSION_ID(),
+                    ...(session ? { 'Mcp-Session-Id': session } : {}),
+                },
+                body: line,
+                signal: AbortSignal.timeout(60_000),
+            });
+            session = response.headers.get('mcp-session-id') ?? session;
+            const text = (await response.text()).trim();
+            if (response.status === 202 || response.status === 204 || text === '') continue;
+            if ((response.headers.get('content-type') ?? '').includes('text/event-stream')) {
+                for (const event of text.split('\n')) if (event.startsWith('data:') && event.slice(5).trim() !== '') process.stdout.write(event.slice(5).trim() + '\n');
+                continue;
+            }
+            let answer = null;
+            try { answer = JSON.parse(text); } catch { /* not JSON-RPC */ }
+            if (answer?.jsonrpc) { process.stdout.write(JSON.stringify(answer) + '\n'); continue; }
+            if (id !== undefined) write({ jsonrpc: '2.0', id, error: { code: -32000, message: response.status === 401 ? 'Cbox Brain refused the token (401); run: brain login' : `Cbox Brain answered ${response.status}: ${text.slice(0, 200)}` } });
+        } catch (error) {
+            if (id !== undefined) write({ jsonrpc: '2.0', id, error: { code: -32001, message: error instanceof Error ? error.message : String(error) } });
+        }
+    }
+}
+
 // ---- main --------------------------------------------------------------------------------
 
 const [command, sub, ...rest] = positional;
@@ -901,6 +1117,15 @@ try {
             break;
         case 'hook':
             await hook(sub);
+            break;
+        case 'orgs':
+            await orgsCommand();
+            break;
+        case 'org':
+            orgCommand(sub, rest[0]);
+            break;
+        case 'mcp':
+            await mcpProxy();
             break;
         case 'whoami':
         case 'spaces':
