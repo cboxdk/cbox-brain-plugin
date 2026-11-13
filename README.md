@@ -6,21 +6,31 @@ The plugin that makes Claude Code read your team's shared memory before it works
 
 ## Install
 
+The simplest way is Brain's installer. It installs the CLI, signs you in once, installs this plugin in Claude Code and wires every other coding agent it finds:
+
+```bash
+curl -fsSL https://app.cboxbrain.com/install | sh
+```
+
+By hand, in Claude Code:
+
 ```
 /plugin marketplace add cboxdk/cbox-brain-plugin
 /plugin install cbox-brain@cbox-brain-plugin
 ```
 
-Then connect the MCP server, if you have not yet, and sign the hooks in. The hooks read nothing until this is done:
+Then sign in, and connect the MCP server through the CLI. The hooks read nothing until you have signed in:
 
 ```bash
-claude mcp add --transport http cbox-brain https://app.cboxbrain.com/mcp
 node ~/.claude/plugins/marketplaces/cbox-brain-plugin/plugins/cbox-brain/scripts/brain.mjs login
+claude mcp add --scope user cbox-brain -- node ~/.claude/plugins/marketplaces/cbox-brain-plugin/plugins/cbox-brain/scripts/brain.mjs mcp --agent claude-code
 ```
 
 `login` opens Cbox ID in your browser (authorization code with PKCE; `--hint <your Cbox ID user id>` asks on your phone instead, `--device` uses the device grant) and stores the credentials in `~/.config/cbox-brain/credentials.json`, mode 600. Nothing is printed. A self-hosted Brain: `login --server https://brain.example.com`. A machine token from your Brain's Settings works too: `BRAIN_TOKEN` in the environment.
 
-Requires Node 20 or newer. No dependencies: the CLI is one file, `plugins/cbox-brain/scripts/brain.mjs`.
+`brain mcp` is the MCP server on stdio. One sign-in serves the hooks and the tools, and the repository picks the organization. It also gives every `brain_remember` a `client_key`, so a write whose answer was lost and is sent again is recorded once. The plain HTTP server (`claude mcp add --transport http cbox-brain https://app.cboxbrain.com/mcp`) works as well, but it has neither.
+
+Requires Node 22 or newer. No dependencies: the CLI is one file, `plugins/cbox-brain/scripts/brain.mjs`.
 
 ## What the hooks do
 
@@ -44,16 +54,7 @@ Opt out per repository with a `.brain-ignore` file in its root, or everywhere wi
 
 ## Other clients
 
-Codex, OpenCode, Cursor, VS Code, Windsurf and Claude Desktop have no hooks from Brain. For them, your Brain's Agents page offers a rules block for `AGENTS.md`, `.cursor/rules` or `.windsurfrules` that states the same order of operations, and the exact MCP configuration per client.
-
-OpenCode, for example:
-
-```bash
-opencode mcp add cbox-brain --url https://app.cboxbrain.com/mcp   # --global for every project
-opencode mcp auth cbox-brain                                      # or /mcps inside OpenCode
-```
-
-and the rules block in `AGENTS.md`, which OpenCode reads.
+The installer (`brain setup`) also connects Codex, Cursor, VS Code Copilot, Devin, Gemini and OpenCode. Each one gets the same `brain mcp` server, a rules block in its instructions file and the hooks in its own format, so Brain is read and written in every session. `brain doctor` shows which agents have used Brain recently. See [Installation](https://github.com/cboxdk/cbox-brain/blob/main/docs/getting-started/installation.md).
 
 ## Keeping the CLI current
 
