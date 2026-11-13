@@ -1,6 +1,6 @@
 {
   "name": "cbox-brain",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Cbox Brain, your team's shared memory, wired into Claude Code: the project's context at session start (and again after a compaction), what changed in Brain on every prompt, a gate before deploy-shaped commands against the team's policies, the last session's handoff and the open reminders, a reminder to remember and to hand off unfinished work at stop, and what was learned and what is left carried through a compaction. Install everything with `curl -fsSL https://app.cboxbrain.com/install | sh`, or by hand: sign in with `node scripts/brain.mjs login` and connect the MCP server with `claude mcp add --scope user cbox-brain -- node <plugin>/scripts/brain.mjs mcp --agent claude-code` (one sign-in for hooks and tools, the repository picks the organization, and every brain_remember carries a client_key so a retry is recorded once). Opt out with BRAIN_HOOKS=off or a .brain-ignore file.",
   "author": {
     "name": "Cbox",

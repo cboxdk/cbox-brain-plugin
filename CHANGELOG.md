@@ -2,6 +2,11 @@
 
 Versions follow the vendored Brain CLI (`plugins/cbox-brain/scripts/brain.mjs`). Earlier versions (0.4.0 to 0.8.0) were not tagged; their commits carry the version in the subject.
 
+## 0.10.1 — 2026-11-13
+
+- **The deploy gate names only what blocks.** When `PreToolUse` denies a command, the reason now names just the policy that blocks and the word it blocks on (`blocked_on`), for example `"Octane is banned in Cbox apps" [mem_…], on \`octane\``. Policies that only warn are no longer listed as blockers. A false hit is to be reported to the person, not reworded around. A Brain server that sends no `blocked_on` gets the old wording.
+- Pairs with the gate fix in Brain (cboxdk/cbox-brain#23). A blocking policy now blocks only on a whole word of its subject, never on a word of its rationale. That fix takes effect when Brain is deployed.
+
 ## 0.10.0 — 2026-11-13
 
 First tagged release.
