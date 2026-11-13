@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit b51c20f, 2026-11-13, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
+// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit 44535f2, 2026-11-13, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
 // The Cbox Brain command line: sign in with Cbox ID, call the REST API and the MCP tools,
 // run as a Claude Code hook, and import memory from Claude Code and Codex. Node 22+, no dependencies.
 //
