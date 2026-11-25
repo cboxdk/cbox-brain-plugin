@@ -2,6 +2,15 @@
 
 Versions follow the vendored Brain CLI (`plugins/cbox-brain/scripts/brain.mjs`). Earlier versions (0.4.0 to 0.8.0) were not tagged; their commits carry the version in the subject.
 
+## 0.11.1 — 2026-11-25
+
+The CLI from cbox-brain 0.11.1. This also brings in 0.10.2 and 0.11.0, which were not synced here.
+
+- **No more 400 at the start of every Claude Code session.** Claude Code 2.1.33x first sends `server/discover` with its protocol version (2026-07-28) in `_meta`. `brain mcp` now sends that version as `MCP-Protocol-Version` and mirrors `Mcp-Method` and `Mcp-Name`, as Brain's MCP server requires. Before, Brain refused the probe and Claude Code fell back to `initialize`.
+- **Shorter Brain lines in replies.** `tell_the_person` is one line ("Saved to Brain: <type> in <space> · <url>"). The stop reminder asks the agent to end with that line and not to mention Brain when nothing was learned.
+- **0.11.0:** `brain setup` wires Amp, on the machine and in its orbs.
+- **0.10.2:** the install signs in again when the sign-in is dead, `brain login` ends once signed in, and `brain` lands on `PATH`.
+
 ## 0.10.1 — 2026-11-13
 
 - **The deploy gate names only what blocks.** When `PreToolUse` denies a command, the reason now names just the policy that blocks and the word it blocks on (`blocked_on`), for example `"Octane is banned in Cbox apps" [mem_…], on \`octane\``. Policies that only warn are no longer listed as blockers. A false hit is to be reported to the person, not reworded around. A Brain server that sends no `blocked_on` gets the old wording.
