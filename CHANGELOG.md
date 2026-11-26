@@ -2,6 +2,13 @@
 
 Versions follow the vendored Brain CLI (`plugins/cbox-brain/scripts/brain.mjs`). Earlier versions (0.4.0 to 0.8.0) were not tagged; their commits carry the version in the subject.
 
+## 0.12.0 — 2026-11-26
+
+The CLI from cbox-brain 0.12.0 (cboxdk/cbox-brain#53).
+
+- **You hear when a newer Brain CLI is out.** Brain now names its current CLI on every answer. When this copy is behind, the session start adds one line for the agent to pass on: the new version and how to update it. For this plugin that is `claude plugin marketplace update cbox-brain-plugin`, then `claude plugin update cbox-brain@cbox-brain-plugin`. `brain doctor` shows the same line. Nothing updates by itself.
+- **A CLI too old to work is refused with what to run.** Brain serves CLI 0.10.0 and newer. An older one gets the update command as its session-start context and on each tool call, instead of errors without an explanation.
+
 ## 0.11.1 — 2026-11-25
 
 The CLI from cbox-brain 0.11.1. This also brings in 0.10.2 and 0.11.0, which were not synced here.
