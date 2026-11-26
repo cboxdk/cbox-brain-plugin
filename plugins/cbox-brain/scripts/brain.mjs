@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit 7d03c87, 2026-11-26, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
+// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit 707af59, 2026-11-26, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
 // The Cbox Brain command line: sign in with Cbox ID, call the REST API and the MCP tools,
 // run as a Claude Code hook, and import memory from Claude Code and Codex. Node 22+, no dependencies.
 //
@@ -19,7 +19,7 @@
 //   brain search <text...> [--limit <n>] [--space <key>] [--type a,b]
 //   brain promote <id> --to shared|<project> [--reason <text>]
 //   brain hook session-start|prompt|pre-tool|stop|pre-compact [--format claude|codex|cursor|copilot|devin|gemini|opencode|amp] # the agent's hook JSON on stdin, its answer on stdout
-//   brain setup [--repo] [--only a,b] [--dry-run] [--remove] [--yes] [--json]  # wire every coding agent on this machine (or, with --repo, this repository's files)
+//   brain setup [--repo|--local] [--only a,b] [--dry-run] [--remove] [--yes] [--json]  # wire every coding agent on this machine (--repo: this repository's committed files; --local: Claude Code in this repository only, nothing committed)
 //                                                               # agents: claude, codex, cursor, copilot, devin, gemini, opencode, amp (Amp also in its orbs on ampcode.com)
 //   brain doctor [--json]                                       # per wired agent: does its session start reach Brain, and has a session fetched context since setup
 //   brain update                                                # replace this file with the server's current brain.mjs (checked against X-Brain-Sha256)
@@ -65,7 +65,7 @@ const CREDENTIALS = join(CONFIG_DIR, 'credentials.json');
 const ORGANIZATIONS_CACHE = join(CACHE_DIR, 'organizations.json');
 const ORGANIZATIONS_TTL = 15 * 60_000; // which repository lives in which organization changes rarely
 const DEFAULT_SERVER = 'https://app.cboxbrain.com';
-const VERSION = '0.12.0';
+const VERSION = '0.13.0';
 const CALLBACK_PORT = Number(process.env.CBOX_BRAIN_CALLBACK_PORT ?? 8765);
 const REDIRECT_URI = `http://127.0.0.1:${CALLBACK_PORT}/callback`;
 
@@ -319,6 +319,7 @@ async function login() {
 
     if (!flags.device) {
         await authorizationCode(d, client, scope, server);
+        await loginEveryOrganization();
         return;
     }
 
@@ -360,6 +361,14 @@ async function refreshed(c, grant) {
 /** A repository that lives in an organization this machine has no sign-in for yet. */
 class NeedsOrganization extends Error {
     constructor(slug, name) { super(`This repository belongs to ${name ?? slug} in Cbox Brain. Sign in to it once: brain login --org ${slug}`); this.slug = slug; }
+}
+
+/** A repository no organization claims, for a person in several: Brain does not guess which one gets its memory. */
+class UnroutedRepository extends Error {
+    constructor(repo, slugs) {
+        super(`${repo} is no project in any of your organizations (${slugs.join(', ')}), so Brain does not guess where it belongs. Pin it once: brain org set <slug> (one of ${slugs.join(', ')}).`);
+        this.slugs = slugs;
+    }
 }
 
 /**
@@ -438,7 +447,16 @@ async function resolveOrganization(cwd = workDir) {
             else if (project.moved_to !== '') owners.add(project.moved_to);
         }
     }
+    // No project holds it: the organization whose root answers for the repository's owner (its GitHub organization).
+    const ownerName = (repoFullName(cwd) ?? '').split('/')[0].toLowerCase();
+    if (owners.size === 0 && ownerName) {
+        for (const organization of map.organizations ?? []) {
+            if ((organization.projects ?? []).some((project) => !project.moved_to && (project.owners ?? []).includes(ownerName))) owners.add(organization.slug);
+        }
+    }
     if (owners.size > 1) throw new Error(`${repo} is a project in ${[...owners].join(' and ')}; pin one for this repository: brain org set <slug>`);
+    // Nobody claims it. One organization: that one. Several: never the default by accident.
+    if (owners.size === 0 && (map.organizations ?? []).length > 1) throw new UnroutedRepository(repo, map.organizations.map((o) => o.slug));
     const [owner] = [...owners];
     if (!owner || owner === map.current) return null;
     if (!loadCredentials()?.orgs?.[owner]) throw new NeedsOrganization(owner, (map.organizations ?? []).find((o) => o.slug === owner)?.name);
@@ -463,11 +481,27 @@ async function loginOrganization(slug) {
     say(`Signed in to ${organization.name}. Repositories that belong to it now use it.`);
 }
 
+/**
+ * After the first sign-in: a grant for each of the person's other organizations too, so every
+ * repository routes to its own organization from the first session, in parallel, with nothing
+ * to switch. Cbox ID binds one organization per grant; the browser is already signed in, so each
+ * comes back by itself. A failure is one line and never undoes the first sign-in.
+ */
+async function loginEveryOrganization() {
+    let map;
+    try { map = await organizations(true); } catch { return; }
+    const c = loadCredentials();
+    for (const organization of map.organizations ?? []) {
+        if (organization.slug === map.current || c?.orgs?.[organization.slug] || !organization.cbox_id) continue;
+        try { await loginOrganization(organization.slug); } catch (error) { say(`Not signed in to ${organization.name}: ${error instanceof Error ? error.message : String(error)} (brain login --org ${organization.slug})`); }
+    }
+}
+
 async function orgsCommand() {
     const map = await organizations(true);
     const c = loadCredentials();
     let here = null;
-    try { here = (await resolveOrganization()) ?? map.current; } catch (error) { here = error instanceof NeedsOrganization ? error.slug : null; }
+    try { here = (await resolveOrganization()) ?? map.current; } catch (error) { here = error instanceof NeedsOrganization ? error.slug : null; if (error instanceof UnroutedRepository) say(error.message); }
     if (flags.json) { json({ ...map, signed_in: [map.current, ...Object.keys(c?.orgs ?? {})], repository: repoProject(workDir), uses: here }); return; }
     for (const organization of map.organizations ?? []) {
         const state = organization.slug === map.current ? 'default sign-in' : c?.orgs?.[organization.slug] ? 'signed in' : `not signed in (brain login --org ${organization.slug})`;
@@ -1265,7 +1299,7 @@ async function hook(event) {
         if (claim) try { unlinkSync(claim); } catch { /* already gone */ }
         // The repository lives in an organization this machine is not signed in to: say so
         // once, at session start, instead of reading the wrong organization's memory.
-        if (error instanceof NeedsOrganization && event === 'session-start') {
+        if ((error instanceof NeedsOrganization || error instanceof UnroutedRepository) && event === 'session-start') {
             hookWrite('session-start', { context: `Cbox Brain: ${error.message} Until then nothing from Brain is read or written for this repository. Tell the person this in one line.` });
             return;
         }
@@ -1781,6 +1815,7 @@ Cbox Brain is this team's memory, connected as the MCP server \`cbox-brain\`. It
 - At the start of a task call \`brain_context\` with \`project\` set to the repository name. Accepted decisions and policies bind; proposals inform.
 - Before a technical choice, and before touching a system you have not touched this session, call \`brain_search\`. Three hits usually settle it.
 - After a learning, a decision or a procedure that worked, call \`brain_remember\` yourself, without asking: \`project\` set to the repository, tags naming every project it is about. Brain files it and answers with a one-line \`tell_the_person\`; end your reply with that line, not restated in your own words. A learning has four parts: Symptom (exact error text), Cause, Fix / rule, Evidence (paths, commit or test the next agent can re-verify).
+- What only concerns this person or this machine (their editor, shell, laptop, local paths, a personal preference) goes in \`space: "personal"\`, never in the team's project: the repository says which organization, not whether the team needs it.
 - A decision the person made in the conversation: \`decided_by: "person"\`, quoting them. It binds at once. A decision you made yourself is a proposal: say so in one line, and call \`brain_accept\` only when the person tells you to.
 - Fix the cause before you write the note: if a better name, a test, an assertion or a comment would have prevented the confusion, do that first. A memory is for what the code cannot say.
 - When you act on a decision you found, call \`brain_ack\`. When a memory turns out wrong, \`brain_supersede\` it with a reason; when it sits in the wrong place, \`brain_move\` it. Never rewrite history.
@@ -2262,9 +2297,9 @@ function which(bin) {
 }
 
 /** Runs an agent's CLI: no stdin (it can never prompt), 20 s at most. */
-function runCli(bin, argv) {
+function runCli(bin, argv, cwd = undefined) {
     try {
-        const stdout = execFileSync(bin, argv, { stdio: ['ignore', 'pipe', 'pipe'], timeout: CLI_TIMEOUT });
+        const stdout = execFileSync(bin, argv, { stdio: ['ignore', 'pipe', 'pipe'], timeout: CLI_TIMEOUT, cwd });
         return { ok: true, stdout: String(stdout ?? '') };
     } catch (error) {
         return { ok: false, error: String(error?.stderr || error?.message || error).trim().split('\n')[0] };
@@ -2669,6 +2704,7 @@ async function checkAgent(a) {
         return format.write('session-start', result) ? { status: 'ok' } : { status: 'failed', detail: 'the session-start hook gave no context' };
     } catch (error) {
         if (error instanceof NeedsOrganization) return { status: 'needs_you', detail: `run: brain login --org ${error.slug}` };
+        if (error instanceof UnroutedRepository) return { status: 'needs_you', detail: error.message };
         if (error instanceof ApiError && error.status === 401) return { status: 'failed', detail: 'the server refused the sign-in (401); run: brain login' };
         if (error instanceof TypeError && /fetch failed/i.test(error.message)) return { status: 'failed', detail: `cannot reach ${setupServer()}; is it up, and is it the right server (brain login --server …)?` };
         return { status: 'failed', detail: error instanceof Error ? error.message : String(error) };
@@ -2730,11 +2766,68 @@ function repoSetup(ctx) {
     return errors.length ? 1 : 0;
 }
 
-/** brain setup [--repo] [--only a,b] [--dry-run] [--remove] [--yes] [--json]; returns the exit code. */
+/** Claude Code's hooks for one repository (`.claude/settings.local.json`): what the plugin gives every repository. */
+const CLAUDE_LOCAL_HOOKS = {
+    key: ['hooks'], style: 'nested', timeout: 15,
+    events: { SessionStart: { event: 'session-start' }, UserPromptSubmit: { event: 'prompt' }, PreToolUse: { event: 'pre-tool', matcher: 'Bash|mcp__.*brain_(remember|handoff)|Edit|Write|MultiEdit|NotebookEdit' }, Stop: { event: 'stop' }, PreCompact: { event: 'pre-compact' } },
+};
+
+/**
+ * brain setup --local: Brain for Claude Code in this repository only, on this machine only. The MCP
+ * server in Claude Code's local scope (this project, not shared), the hooks in
+ * .claude/settings.local.json, the rules in CLAUDE.local.md; the two files go in .git/info/exclude,
+ * so nothing is committed. For a person who uses Brain for some repositories on a machine and not others.
+ */
+function localSetup(ctx) {
+    const root = gitRoot(process.cwd());
+    if (!root) fail('brain setup --local: not inside a git repository');
+    const r = { repo: root, files: [], commands: [], errors: [], needs: [] };
+    const add = ['mcp', 'add', '--scope', 'local', SETUP_NAME, '--', ...mcpArgv('claude-code')];
+    const remove = ['mcp', 'remove', '--scope', 'local', SETUP_NAME];
+    const settings = join(root, '.claude', 'settings.local.json');
+    const rules = join(root, 'CLAUDE.local.md');
+    const record = (path, result) => { if (result.error) r.errors.push(result.error); else if (result.changed || !ctx.dryRun) r.files.push(relative(root, path)); };
+
+    if (ctx.dryRun) r.commands.push(shown('claude', ctx.remove ? remove : add));
+    else if (!which('claude')) r.needs.push(`Claude Code is not on PATH; run in this repository: ${shown('claude', ctx.remove ? remove : add)}`);
+    else {
+        // Claude Code keys local scope by the directory it runs in: the repository root. An existing entry is replaced.
+        runCli('claude', remove, root);
+        r.commands.push(shown('claude', ctx.remove ? remove : add));
+        if (!ctx.remove && !runCli('claude', add, root).ok) r.errors.push(`claude mcp add --scope local failed; run in ${root}: ${shown('claude', add)}`);
+    }
+    if (ctx.remove) {
+        record(settings, removeHooks(CLAUDE_LOCAL_HOOKS, settings, ctx.opts));
+        record(rules, removing(rules, () => removeMarkedBlock(rules, ctx.opts), ctx.opts));
+    } else {
+        record(settings, setHooks(CLAUDE_LOCAL_HOOKS, 'claude', settings, ctx.opts));
+        record(rules, setMarkedBlock(rules, RULES_BLOCK, ctx.opts));
+        // Never committed by accident: the person's own files, with this machine's paths in them.
+        const exclude = join(root, '.git', 'info', 'exclude');
+        if (!ctx.dryRun && statSync(join(root, '.git')).isDirectory()) {
+            const text = readIfExists(exclude) ?? '';
+            const missing = ['.claude/settings.local.json', 'CLAUDE.local.md'].filter((line) => !text.split('\n').includes(line));
+            if (missing.length) { mkdirSync(dirname(exclude), { recursive: true }); writeFileSync(exclude, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`); }
+        }
+        // Brain also wired for every repository (user scope, the plugin): then this repository is not the only one.
+        const claude = AGENTS_SETUP.find((a) => a.key === 'claude');
+        if (registeredArgv(claude) || pluginInstalled()) r.needs.push('Brain is also set up for every repository on this machine (user scope); to keep it to the repositories you set up with --local, run: brain setup --remove --only claude');
+    }
+    if (flags.json) json({ ...r, dry_run: ctx.dryRun });
+    else {
+        for (const e of r.errors) say('✗', e);
+        for (const n of r.needs) say('⚠', n);
+        out(r.files.length ? `${ctx.dryRun ? 'would write' : ctx.remove ? 'removed from' : 'Claude Code uses Brain in this repository only; wrote'} ${r.files.join(', ')} (not committed)` : 'nothing to change');
+    }
+    return r.errors.length ? 1 : 0;
+}
+
+/** brain setup [--repo|--local] [--only a,b] [--dry-run] [--remove] [--yes] [--json]; returns the exit code. */
 async function setup() {
     const dryRun = Boolean(flags['dry-run']);
     const ctx = { dryRun, remove: Boolean(flags.remove), server: setupServer(), opts: { dryRun } };
     if (flags.repo) return repoSetup(ctx);
+    if (flags.local) return localSetup(ctx);
 
     const only = list(flags.only);
     const unknown = only.filter((n) => !AGENTS_SETUP.some((a) => a.key === n || FORMATS[a.format].agent === n));

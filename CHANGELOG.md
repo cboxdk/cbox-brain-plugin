@@ -2,6 +2,15 @@
 
 Versions follow the vendored Brain CLI (`plugins/cbox-brain/scripts/brain.mjs`). Earlier versions (0.4.0 to 0.8.0) were not tagged; their commits carry the version in the subject.
 
+## 0.13.0 — 2026-11-26
+
+The CLI from cbox-brain 0.13.0 (cboxdk/cbox-brain#55).
+
+- **Several organizations at once.** `brain login` signs in to each of your organizations, and every session uses the one its repository belongs to. Nothing to switch.
+- **No guessing.** If you are in several organizations and a repository belongs to none of them (no project, and no root for its GitHub owner), the session start says so in one line with `brain org set <slug>`; nothing is read or written there.
+- **Personal stays personal.** What concerns only you or your machine is filed in your personal space.
+- **One repository only.** `brain setup --local` wires Claude Code for the current repository alone, without the plugin and without committing anything. If you use the plugin, Brain runs in every repository; uninstall it to keep Brain to `--local` repositories.
+
 ## 0.12.0 — 2026-11-26
 
 The CLI from cbox-brain 0.12.0 (cboxdk/cbox-brain#53).
