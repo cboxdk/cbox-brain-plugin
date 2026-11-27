@@ -2,6 +2,13 @@
 
 Versions follow the vendored Brain CLI (`plugins/cbox-brain/scripts/brain.mjs`). Earlier versions (0.4.0 to 0.8.0) were not tagged; their commits carry the version in the subject.
 
+## 0.13.1 — 2026-11-27
+
+- **Your answer stays visible in focus view.** Stop is silent; optional reminders arrive before the answer through PreToolUse, without starting another turn.
+- **Scratchpads are not repository work.** File and notebook edits outside the Git top level no longer trigger handoff reminders, including paths through symlinks.
+- **Plugin updates take effect.** Hooks use the bundled CLI before an older `brain` on PATH. An explicit `BRAIN_CLI` override still works for other events; Stop remains silent even with an older override.
+- Verified with 12 real Claude Code 2.1.316 focus-view sessions on Linux, comparing the original 0.10.1 plugin and this fix. All six fixed sessions retained the requested answer with no Stop feedback. macOS was not tested.
+
 ## 0.13.0 — 2026-11-26
 
 The CLI from cbox-brain 0.13.0 (cboxdk/cbox-brain#55).

@@ -1,5 +1,5 @@
 {
-  "description": "Cbox Brain live memory: context at session start (re-injected after a compaction, with the last handoff and the open reminders), what changed on every prompt, a gate on deploy-shaped commands, a reminder to remember and to hand off unfinished work at stop, what was learned and what is left carried through a compaction.",
+  "description": "Cbox Brain live memory: context at session start (re-injected after a compaction, with the last handoff and the open reminders), what changed on every prompt, a gate on deploy-shaped commands, reminders to remember and hand off unfinished work before the answer, what was learned and what is left carried through a compaction.",
   "hooks": {
     "SessionStart": [
       {

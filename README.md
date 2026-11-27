@@ -38,9 +38,9 @@ Requires Node 22 or newer. No dependencies: the CLI is one file, `plugins/cbox-b
 |---|---|
 | `SessionStart` (also after a compaction) | "Cbox Brain context for `<project>`": the last session's handoff, the current decisions and policies, the open reminders, the nearest procedures and learnings, open contradictions and the tags to search by, labelled as a selection with each line's status. Shorter after a compaction |
 | `UserPromptSubmit` | what changed in Brain since the previous prompt (accepted, promoted, superseded, archived; new decision and policy proposals) plus up to three memories near the prompt, within about 1500 characters; a question about the past also gets a nudge to search Brain. The ids are acknowledged as seen, so the Decisions page shows which agents saw a decision |
-| `PreToolUse` (Bash, edits, `brain_remember`, `brain_handoff`) | counts the work done; a deploy-shaped command (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) goes through Brain's gate: a warning with the matched policies, or a deny when a policy tagged `blocking` matches |
+| `PreToolUse` (Bash, edits, `brain_remember`, `brain_handoff`) | counts tool calls; after eight calls with nothing remembered, one reminder to remember useful learnings; on the first repository file edit or `git commit` attempt, one reminder to hand off only if work remains when finishing. File and notebook paths are checked against the git top level, resolving symlinks; writes to external scratchpads or `/tmp` do not count as repository edits. Deploy-shaped commands (`deploy`, `migrate`, `git push`, `git tag`, `gh release`, `kubectl`, `tofu`, `terraform`, `helm`) go through Brain's gate: a warning with the matched policies, or a deny when a policy tagged `blocking` matches |
 | `PreCompact` | instructions for the compaction summary: keep what was learned and not yet remembered, the memory ids cited, the project, and what is left to do |
-| `Stop` | after more than eight tool calls with nothing remembered, one reminder to remember the learnings by itself and show where they went; after files changed or a commit with no handoff, one reminder to write `brain_handoff` if the work is unfinished |
+| `Stop` | no output. Reminders arrive before the answer, so they cannot start another turn that hides it in Claude Code's focus view |
 
 The agent reads the delta instead of re-fetching, so the cost per turn is small: one request to `/api/v1/changes` with a cursor kept in `~/.cache/cbox-brain/<project>.cursor`.
 
@@ -59,6 +59,8 @@ The installer (`brain setup`) also connects Codex, Cursor, VS Code Copilot, Devi
 ## Keeping the CLI current
 
 `plugins/cbox-brain/scripts/brain.mjs` is vendored from [`cboxdk/cbox-brain`](https://github.com/cboxdk/cbox-brain) `bin/brain.mjs`; the header line records the source commit. `scripts/sync-brain-cli.sh /path/to/cbox-brain` refreshes it and the plugin version. `python3 scripts/validate.py` checks the marketplace, the manifest, the hooks and the skill.
+
+Hooks use this bundled CLI before `brain` on PATH, so a plugin update takes effect even when the standalone CLI is older. `BRAIN_CLI` remains an explicit override for other hook events; `Stop` always exits silently. Run `node --test scripts/*.test.mjs` to check the wrapper with an older CLI present.
 
 ## Security
 

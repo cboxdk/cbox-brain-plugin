@@ -24,3 +24,4 @@ jobs:
       - run: python3 scripts/validate.py
       - run: node --check plugins/cbox-brain/scripts/brain.mjs
       - run: bash -n plugins/cbox-brain/scripts/brain-hook.sh
+      - run: node --test scripts/*.test.mjs

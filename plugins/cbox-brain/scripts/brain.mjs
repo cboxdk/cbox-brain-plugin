@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit 707af59, 2026-11-26, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
+// Vendored from cboxdk/cbox-brain bin/brain.mjs at commit eb8ed2e, 2026-11-27, by scripts/sync-brain-cli.sh. Do not edit here: change it in cbox-brain and run the sync again.
 // The Cbox Brain command line: sign in with Cbox ID, call the REST API and the MCP tools,
 // run as a Claude Code hook, and import memory from Claude Code and Codex. Node 22+, no dependencies.
 //
@@ -35,7 +35,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync, chmodSync, copyFileSync, renameSync, realpathSync, lstatSync, readlinkSync, linkSync, rmdirSync, rmSync, mkdtempSync, accessSync, constants as fsConstants } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -65,7 +65,7 @@ const CREDENTIALS = join(CONFIG_DIR, 'credentials.json');
 const ORGANIZATIONS_CACHE = join(CACHE_DIR, 'organizations.json');
 const ORGANIZATIONS_TTL = 15 * 60_000; // which repository lives in which organization changes rarely
 const DEFAULT_SERVER = 'https://app.cboxbrain.com';
-const VERSION = '0.13.0';
+const VERSION = '0.13.1';
 const CALLBACK_PORT = Number(process.env.CBOX_BRAIN_CALLBACK_PORT ?? 8765);
 const REDIRECT_URI = `http://127.0.0.1:${CALLBACK_PORT}/callback`;
 
@@ -776,11 +776,9 @@ async function moveCommand(id) {
 //   - "PreCompact": input `trigger` (manual|auto), `custom_instructions`; plain stdout is used as the
 //     instructions for the compaction summary (no hookSpecificOutput). "SessionStart" with `source: compact`
 //     runs after the compaction, which is where the context is re-injected.
-//   - "Stop" → "Stop decision control": input `stop_hook_active`; `hookSpecificOutput.additionalContext` is
-//     "non-error feedback for Claude. The conversation continues so Claude can act on it" and is subject to
-//     the `stop_hook_active` loop guard, so the stop reminder fires once per session and never when
-//     `stop_hook_active` is true. `decision: "block"` is never sent. A second, separate reminder (also once)
-//     asks for brain_handoff when the session changed files or committed and wrote no handoff.
+//   - "Stop": no output for Claude Code. additionalContext continues the conversation and can hide the
+//     answer in focus view. Both once-per-session reminders ride on PreToolUse instead: remember after
+//     eight calls, and hand off unfinished work when a repository edit or commit is attempted.
 //   - "Exit code output": 0 = proceed and apply the JSON on stdout; 2 = block with stderr as the reason;
 //     anything else = non-blocking error. Every path below exits 0; a hook never fails the session.
 //
@@ -894,6 +892,7 @@ const readSnake = (shellTools) => (i) => ({
     cwd: str(i.cwd) ?? str(process.env.DEVIN_PROJECT_DIR),
     prompt: str(i.prompt) ?? '',
     command: shellTools.includes(String(i.tool_name ?? '')) ? String(asObject(i.tool_input).command ?? '') : '',
+    filePath: str(asObject(i.tool_input).file_path) ?? str(asObject(i.tool_input).notebook_path),
     source: str(i.source),
     tool: String(i.tool_name ?? ''),
     stopActive: Boolean(i.stop_hook_active),
@@ -923,7 +922,7 @@ const SHELL_TOOL = { claude: 'Bash', codex: 'Bash', devin: 'exec', gemini: 'run_
 const CLAUDE_EVENTS = { 'session-start': 'SessionStart', prompt: 'UserPromptSubmit', 'pre-tool': 'PreToolUse', stop: 'Stop' };
 
 const FORMATS = {
-    claude: { agent: 'claude-code', perPrompt: true, read: readSnake([SHELL_TOOL.claude]), write: writeSpecific(CLAUDE_EVENTS) },
+    claude: { agent: 'claude-code', perPrompt: true, nudgeOnTool: true, read: readSnake([SHELL_TOOL.claude]), write: writeSpecific(CLAUDE_EVENTS) },
     codex: { agent: 'codex', perPrompt: true, read: readSnake([SHELL_TOOL.codex]), write: writeSpecific(CLAUDE_EVENTS) },
     devin: { agent: 'devin', perPrompt: true, read: readSnake([SHELL_TOOL.devin]), write: writeSpecific(CLAUDE_EVENTS, { denyShape: 'block' }) },
     gemini: {
@@ -1149,13 +1148,35 @@ async function hookPrompt(input, project) {
     return { context: parts.join('\n') };
 }
 
+/** Resolve existing parents too: Write may name a new file under a symlinked directory. */
+function resolvedWritePath(path) {
+    try { return realpathSync(path); } catch (error) {
+        if (error.code !== 'ENOENT' || dirname(path) === path) throw error;
+        try {
+            if (lstatSync(path).isSymbolicLink()) return resolvedWritePath(resolvePath(dirname(path), readlinkSync(path)));
+        } catch (missing) { if (missing.code !== 'ENOENT') throw missing; }
+        return join(resolvedWritePath(dirname(path)), basename(path));
+    }
+}
+
+/** Tool names alone are not repository work: scratchpads and /tmp must not trigger a handoff. */
+function isRepositoryWrite(input) {
+    if (!input.filePath) return false;
+    const cwd = input.cwd ?? process.cwd();
+    try {
+        const root = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim();
+        const path = relative(realpathSync(root), resolvedWritePath(resolvePath(cwd, input.filePath)));
+        return path !== '' && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+    } catch { return false; }
+}
+
 async function hookPreTool(input, project) {
     const tool = String(input.tool ?? '');
     const command = String(input.command ?? '');
     const remembered = /brain_remember|brain(\.mjs)?\s+remember\b/.test(command || tool);
     const handedOff = /brain_handoff/.test(tool);
-    // Work that would be lost if the session stopped now: files changed or a commit made.
-    const worked = WORK_TOOLS.includes(tool) || (command !== '' && /\bgit\s+commit\b/.test(command));
+    // PreToolUse observes attempts, not successful changes. Claude supplies the target file path.
+    const worked = (WORK_TOOLS.includes(tool) && (hookFormat !== 'claude' || isRepositoryWrite(input))) || (command !== '' && /\bgit\s+commit\b/.test(command));
     const id = input.sessionId ?? SESSION_ID();
     touchSession(project, id, (s) => ({
         tools: (s.tools ?? 0) + 1,
@@ -1207,8 +1228,9 @@ function stopNudges(s, threshold) {
     const remind = !s.reminded && !s.remembered && (s.tools ?? 0) > threshold;
     const handoff = !s.handoffReminded && !s.handedOff && Boolean(s.worked);
     const parts = [];
-    if (remind) parts.push(`Cbox Brain: this session made ${s.tools} tool calls and remembered nothing. Before you finish, remember the one to three things the next agent should know yourself (brain_remember with project and tags; a learning is symptom, cause, fix, evidence; a decision the person made is decided_by person), then end your reply with each tell_the_person line and nothing more about Brain. Do not ask the person what to remember or where it goes. If nothing was learned, do not mention Brain.`);
-    if (handoff) parts.push(`Cbox Brain: this session changed files or committed. If the work is not finished (something is left, untested, unpushed or waiting on the person), call brain_handoff with project, what was done, what is left (each becomes a reminder) and the commits and files, then end your reply with its tell_the_person line. Anything you noticed that belongs to other work: a reminder (brain_remember type reminder). If the work is done, finish without a handoff.`);
+    if (remind) parts.push(`Cbox Brain: this session made ${s.tools} tool calls and remembered nothing. Before you finish, if you learned something useful for future work, save it with brain_remember (project and tags; a learning is symptom, cause, fix, evidence; a decision the person made is decided_by person). If nothing reusable was learned, skip this. Do not ask the person what to remember or where it goes.`);
+    if (handoff) parts.push('Cbox Brain: if you eventually stop with repository work unfinished, call brain_handoff with project, what was done, what remains, and the relevant commits and files. Continue the task first; write a handoff only when stopping with work left, not merely because you edited a file. If the work is done, skip this.');
+    if (parts.length) parts.push("Keep your final answer focused on the person's request. If you saved something, append its tell_the_person line. Do not send a separate reply explaining why you skipped a Brain reminder.");
     return { remind, handoff, text: parts.join('\n\n') };
 }
 
